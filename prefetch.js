@@ -192,4 +192,88 @@
       const vxMaxX = Math.floor(this._lon2tile(bounds.getEast(), z));
       const vyMinY = Math.floor(this._lat2tile(bounds.getNorth(), z));
       const vyMaxY = Math.floor(this._lat2tile(bounds.getSouth(), z));
-      const t = 2 ** z, wrapX=(x)=>((x%t)+t)%t, clampY=(y)=>Math.max(0,Math.min(t-1,y))**
+      const t = 2 ** z, wrapX=(x)=>((x%t)+t)%t, clampY=(y)=>Math.max(0,Math.min(t-1,y));
+      const tilesAtZ = [];
+      for (let x=vxMinX; x<=vxMaxX; x++) for (let y=vyMinY; y<=vyMaxY; y++) tilesAtZ.push({x:wrapX(x), y:clampY(y), z});
+      return { minX:vxMinX, maxX:vxMaxX, minY:vyMinY, maxY:vyMaxY, tilesAtZ };
+    }
+
+    _tileURL(tmpl, z, x, y) {
+      if (!tmpl.includes('{z}') || !tmpl.includes('{x}') || !tmpl.includes('{y}')) return null;
+      return tmpl.replace('{z}', z).replace('{x}', x).replace('{y}', y);
+    }
+    _lon2tile(lon,z){ return ((lon+180)/360)*2**z; }
+    _lat2tile(lat,z){ const r=lat*Math.PI/180; return ((1-Math.log(Math.tan(r)+1/Math.cos(r))/Math.PI)/2)*2**z; }
+    _tile2lon(x,z){ return x/2**z*360-180; }
+    _tile2lat(y,z){ const n=Math.PI-2*Math.PI*y/2**z; return 180/Math.PI*Math.atan(0.5*(Math.exp(n)-Math.exp(-n))); }
+
+    _tilePolygonFeature(z,x,y){
+      const w=this._tile2lon(x,z), e=this._tile2lon(x+1,z), n=this._tile2lat(y,z), s=this._tile2lat(y+1,z);
+      return { type:"Feature", properties:{z,x,y}, geometry:{ type:"Polygon", coordinates:[[[w,s],[e,s],[e,n],[w,n],[w,s]]]} };
+    }
+
+    _ensureDebugLayers(){
+      const m=this.map;
+
+      // sources
+      if (!m.getSource('prefetch-neighbors')) m.addSource('prefetch-neighbors',{ type:'geojson', data:{ type:'FeatureCollection', features:[] }});
+      if (!m.getSource('prefetch-parents'))  m.addSource('prefetch-parents',{  type:'geojson', data:{ type:'FeatureCollection', features:[] }});
+
+      // fill layers（可視/不可視は後で制御）
+      if (!m.getLayer('prefetch-neighbors-fill')) {
+        m.addLayer({ id:'prefetch-neighbors-fill', type:'fill', source:'prefetch-neighbors',
+          paint:{ 'fill-color':'#1e90ff','fill-opacity':0.18 } });
+      }
+      if (!m.getLayer('prefetch-parents-fill')) {
+        m.addLayer({ id:'prefetch-parents-fill', type:'fill', source:'prefetch-parents',
+          paint:{ 'fill-color':'#ff3b30','fill-opacity':0.18 } });
+      }
+
+      // line layers（常に表示）
+      if (!m.getLayer('prefetch-neighbors-line')) {
+        m.addLayer({ id:'prefetch-neighbors-line', type:'line', source:'prefetch-neighbors',
+          paint:{ 'line-color':'#1e90ff','line-width':2,'line-opacity':0.9 } });
+      }
+      if (!m.getLayer('prefetch-parents-line')) {
+        m.addLayer({ id:'prefetch-parents-line', type:'line', source:'prefetch-parents',
+          paint:{ 'line-color':'#ff3b30','line-width':2,'line-opacity':0.9 } });
+      }
+
+      this._applyFillVisibility();
+
+      // 必要なときだけ最前面化（既に最前面なら何もしない）
+      const toTopIfNeeded = (id) => {
+        const layers = m.getStyle().layers || [];
+        const idx = layers.findIndex(l => l.id === id);
+        if (idx === -1) return;
+        if (idx === layers.length - 1) return; // すでに最前面
+        this._styledataGuard = true;           // ループ防止
+        try {
+          m.moveLayer(id); // beforeId なしで本当の最前面へ
+        } finally {
+          requestAnimationFrame(() => { this._styledataGuard = false; });
+        }
+      };
+      ['prefetch-neighbors-fill','prefetch-neighbors-line','prefetch-parents-fill','prefetch-parents-line']
+        .forEach(toTopIfNeeded);
+    }
+
+    _applyFillVisibility(){
+      const m=this.map;
+      const vis = this.opts.debugFill ? 'visible' : 'none';
+      if (m.getLayer('prefetch-neighbors-fill')) m.setLayoutProperty('prefetch-neighbors-fill', 'visibility', vis);
+      if (m.getLayer('prefetch-parents-fill'))  m.setLayoutProperty('prefetch-parents-fill',  'visibility', vis);
+    }
+
+    _updateDebugOverlay(neighborSet, parentSet){
+      const nf=[], pf=[];
+      for (const k of neighborSet){ const [z,x,y]=k.split('/').map(Number); nf.push(this._tilePolygonFeature(z,x,y)); }
+      for (const k of parentSet){ const [z,x,y]=k.split('/').map(Number);  pf.push(this._tilePolygonFeature(z,x,y)); }
+      this.map.getSource('prefetch-neighbors')?.setData({ type:'FeatureCollection', features:nf });
+      this.map.getSource('prefetch-parents')?.setData({ type:'FeatureCollection', features:pf });
+      // ここでは moveLayer しない（無限 styledata 防止）
+    }
+  }
+
+  global.TilePrefetcher = TilePrefetcher;
+})(typeof window !== 'undefined' ? window : globalThis);
