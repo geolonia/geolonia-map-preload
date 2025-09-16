@@ -2,6 +2,8 @@
 
 Geolonia Map 用のタイルのプリロードデモです。
 
+https://geolonia.github.io/geolonia-map-preload/
+
 - 表示範囲の **上下左右（neighbors）** と
 - 指定段数の **親ズームタイル（zoomOutLevels）**
 
