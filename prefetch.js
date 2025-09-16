@@ -25,7 +25,7 @@
       this._debounceTimer = null;
       this._inflight = new Set();
       this._tilejsonCache = new Map(); // sourceId -> {tiles:[]}
-      this._templates = [];            // 解決済み tile URL templates
+      this._tileSources = [];            // 解決済み tile URL templates
       this._onMoveEnd = this._onMoveEnd.bind(this);
 
       // styledata 再入防止フラグ
@@ -40,7 +40,7 @@
       this.map.off("styledata", this._onStyleDataBound);
       this._inflight.clear();
       this._tilejsonCache.clear();
-      this._templates = [];
+      this._tileSources = [];
     }
 
     // 公開API: 塗りON/OFF
@@ -56,7 +56,7 @@
       this._onStyleDataBound = this._onStyleData.bind(this);
       this.map.on("styledata", this._onStyleDataBound);
       this.map.on("moveend", this._onMoveEnd);
-      this._resolveTemplates().then(() => this._onMoveEnd());
+      this._getTileSources().then(() => this._onMoveEnd());
     }
 
     _onStyleData() {
@@ -64,18 +64,20 @@
       this._styledataGuard = true;
       try {
         this._ensureDebugLayers(); // レイヤ存在確保（並べ替えは必要時のみ）
-        this._resolveTemplates();  // タイルテンプレ更新
+        this._getTileSources();  // タイルテンプレ更新
       } finally {
         requestAnimationFrame(() => { this._styledataGuard = false; });
       }
     }
 
     _onMoveEnd() {
+      // 実行中の処理をキャンセルして再スケジュール
       clearTimeout(this._debounceTimer);
+      // 少し待ってから fetch 開始（連続移動対策）
       this._debounceTimer = setTimeout(() => this._prefetchNow(), this.opts.debounceMs);
     }
 
-    async _resolveTemplates() {
+    async _getTileSources() {
       const style = this.map.getStyle?.();
       if (!style || !style.sources) return;
 
@@ -101,11 +103,11 @@
           }
         }
       }
-      this._templates = templates.filter(u => typeof u === 'string');
+      this._tileSources = templates.filter(u => typeof u === 'string');
 
-      if (!this._lastLog || this._lastLog !== this._templates.length) {
-        console.debug(`[prefetch] templates resolved: ${this._templates.length}`);
-        this._lastLog = this._templates.length;
+      if (!this._lastLog || this._lastLog !== this._tileSources.length) {
+        console.debug(`[prefetch] templates resolved: ${this._tileSources.length}`);
+        this._lastLog = this._tileSources.length;
       }
     }
 
@@ -116,9 +118,9 @@
     }
 
     async _prefetchNow() {
-      if (!this._templates.length) {
-        await this._resolveTemplates();
-        if (!this._templates.length) return;
+      if (!this._tileSources.length) {
+        await this._getTileSources();
+        if (!this._tileSources.length) return;
       }
       const z = Math.max(0, Math.min(22, Math.floor(this.map.getZoom())));
       const b = this.map.getBounds();
@@ -133,8 +135,8 @@
         const tiles = this._collectNeighborsTiles(z, minX, minY, maxX, maxY, this.opts.neighbors);
         for (const {x,y} of tiles) {
           neighborSet.add(`${z}/${x}/${y}`);
-          for (const tmpl of this._templates) {
-            const u = this._tileURL(tmpl, z, x, y); if (u) urls.add(u);
+          for (const tileSource of this._tileSources) {
+            const u = this._tileURL(tileSource, z, x, y); if (u) urls.add(u);
           }
         }
       }
@@ -142,18 +144,18 @@
       // 親ズーム：zoomOutLevels
       const levels = Math.max(0, this.opts.zoomOutLevels | 0);
       for (let d = 1; d <= levels; d++) {
-        const pz = z - d; if (pz < 0) break;
+        const parentZoom = z - d; if (parentZoom < 0) break;
         const tmp = new Set();
         for (const {x,y} of tilesAtZ) {
           let px = x, py = y;
           for (let k=0;k<d;k++){ px = Math.floor(px/2); py = Math.floor(py/2); }
-          tmp.add(`${pz}/${px}/${py}`);
+          tmp.add(`${parentZoom}/${px}/${py}`);
         }
         for (const key of tmp) {
           parentSet.add(key);
-          const [pzStr, pxStr, pyStr] = key.split('/');
-          for (const tmpl of this._templates) {
-            const u = this._tileURL(tmpl, +pzStr, +pxStr, +pyStr); if (u) urls.add(u);
+          const [parentZoomStr, pxStr, pyStr] = key.split('/');
+          for (const tileSource of this._tileSources) {
+            const u = this._tileURL(tileSource, +parentZoomStr, +pxStr, +pyStr); if (u) urls.add(u);
           }
         }
       }
@@ -198,9 +200,9 @@
       return { minX:vxMinX, maxX:vxMaxX, minY:vyMinY, maxY:vyMaxY, tilesAtZ };
     }
 
-    _tileURL(tmpl, z, x, y) {
-      if (!tmpl.includes('{z}') || !tmpl.includes('{x}') || !tmpl.includes('{y}')) return null;
-      return tmpl.replace('{z}', z).replace('{x}', x).replace('{y}', y);
+    _tileURL(tileSource, z, x, y) {
+      if (!tileSource.includes('{z}') || !tileSource.includes('{x}') || !tileSource.includes('{y}')) return null;
+      return tileSource.replace('{z}', z).replace('{x}', x).replace('{y}', y);
     }
     _lon2tile(lon,z){ return ((lon+180)/360)*2**z; }
     _lat2tile(lat,z){ const r=lat*Math.PI/180; return ((1-Math.log(Math.tan(r)+1/Math.cos(r))/Math.PI)/2)*2**z; }
