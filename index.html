@@ -6,6 +6,13 @@
   <meta http-equiv="X-UA-Compatible" content="IE=edge">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Geolonia Map</title>
+
+  <!-- Preload & Preconnect -->
+  <link rel="preload" href="https://cdn.geolonia.com/style/geolonia/basic-v1/ja.json" as="fetch" type="application/json" crossorigin="anonymous">
+  <link rel="preconnect" href="https://tileserver.geolonia.com" crossorigin>
+  <link rel="preconnect" href="https://glyphs.geolonia.com" crossorigin>
+  <link rel="preconnect" href="https://api.geolonia.com" crossorigin>
+
   <style>
     html,
     body,
@@ -31,18 +38,16 @@
     hash: true
   })
 
-    // 初期化（塗りON）
   const prefetcher = new TilePrefetcher(map, {
-    neighbors: 3,        // 青: 同ズーム外側
-    zoomOutLevels: 1,    // 赤: 親ズーム段数
+    neighbors: 3,
+    zoomOutLevels: 1,
     maxRequestsPerMove: 140,
-    debugFill: true      // ← 塗りON/OFF
+    debugFill: true
   });
 
   map.on('load', () => {
     map.showTileBoundaries = true;
   });
-
 </script>
 </body>
 </html>
