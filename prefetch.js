@@ -224,11 +224,11 @@
       // fill layers（可視/不可視は後で制御）
       if (!m.getLayer('prefetch-neighbors-fill')) {
         m.addLayer({ id:'prefetch-neighbors-fill', type:'fill', source:'prefetch-neighbors',
-          paint:{ 'fill-color':'#1e90ff','fill-opacity':0.18 } });
+          paint:{ 'fill-color':'#1e90ff','fill-opacity':0.05 } });
       }
       if (!m.getLayer('prefetch-parents-fill')) {
         m.addLayer({ id:'prefetch-parents-fill', type:'fill', source:'prefetch-parents',
-          paint:{ 'fill-color':'#ff3b30','fill-opacity':0.18 } });
+          paint:{ 'fill-color':'#ff3b30','fill-opacity':0.05 } });
       }
 
       // line layers（常に表示）

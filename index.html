@@ -28,11 +28,12 @@
     style: 'geolonia/basic-v1',
     center: [139.74135744, 35.65809922], // 日本経緯度原点
     zoom: 12,
+    hash: true
   })
 
     // 初期化（塗りON）
   const prefetcher = new TilePrefetcher(map, {
-    neighbors: 1,        // 青: 同ズーム外側
+    neighbors: 3,        // 青: 同ズーム外側
     zoomOutLevels: 1,    // 赤: 親ズーム段数
     maxRequestsPerMove: 140,
     debugFill: true      // ← 塗りON/OFF
