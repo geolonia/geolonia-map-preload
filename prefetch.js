@@ -1,18 +1,18 @@
 // tile-prefetcher.js
-// UMD風: <script src="tile-prefetcher.js"></script> で window.TilePrefetcher を提供
+// UMD: window.TilePrefetcher を提供
 (function (global) {
   class TilePrefetcher {
     /**
      * @param {maplibregl.Map|geolonia.Map} map
      * @param {{
      *   sourceIds?: string[],
-     *   neighbors?: number,          // 同ズームの外側リング数 (0=なし)
-     *   zoomOutLevels?: number,      // 親ズーム段数 (0=なし)
+     *   neighbors?: number,
+     *   zoomOutLevels?: number,
      *   debounceMs?: number,
      *   maxRequestsPerMove?: number,
      *   requestInit?: RequestInit,
      *   shouldPrefetch?: (url:string)=>boolean,
-     *   debugFill?: boolean          // 塗りの可視化を行うか（true=塗る、false=枠線のみ）
+     *   debugFill?: boolean
      * }=} opts
      */
     constructor(map, opts = {}) {
@@ -31,8 +31,11 @@
       this._debounceTimer = null;
       this._inflight = new Set();
       this._tilejsonCache = new Map(); // sourceId -> {tiles:[]}
-      this._templates = [];            // 展開済み tile URL templates
+      this._templates = [];            // 解決済み tile URL templates
       this._onMoveEnd = this._onMoveEnd.bind(this);
+
+      // styledata 再入防止フラグ
+      this._styledataGuard = false;
 
       if (map.isStyleLoaded && map.isStyleLoaded()) this._bind();
       else map.on("load", () => this._bind());
@@ -40,13 +43,13 @@
 
     destroy() {
       this.map.off("moveend", this._onMoveEnd);
+      this.map.off("styledata", this._onStyleDataBound);
       this._inflight.clear();
       this._tilejsonCache.clear();
       this._templates = [];
-      // デバッグレイヤは残す（必要ならここでremoveも可）
     }
 
-    // ---- Public: 塗りON/OFF ----
+    // 公開API: 塗りON/OFF
     setFillEnabled(enabled) {
       this.opts.debugFill = !!enabled;
       this._applyFillVisibility();
@@ -55,12 +58,24 @@
     // ---- 内部 ----
     _bind() {
       this._ensureDebugLayers();
-      this.map.on("styledata", () => {
-        this._ensureDebugLayers(); // スタイル再読込時にレイヤ再生成
-        this._resolveTemplates();
-      });
+      // styledata を安全に処理
+      this._onStyleDataBound = this._onStyleData.bind(this);
+      this.map.on("styledata", this._onStyleDataBound);
       this.map.on("moveend", this._onMoveEnd);
       this._resolveTemplates().then(() => this._onMoveEnd());
+    }
+
+    _onStyleData() {
+      // 自分が moveLayer / addLayer した直後の styledata は無視
+      if (this._styledataGuard) return;
+      this._styledataGuard = true;
+      try {
+        this._ensureDebugLayers(); // レイヤ存在確保（並べ替えは必要時のみ）
+        this._resolveTemplates();  // タイルテンプレ更新
+      } finally {
+        // 次フレームで解除（同期中の連鎖を防ぐ）
+        requestAnimationFrame(() => { this._styledataGuard = false; });
+      }
     }
 
     _onMoveEnd() {
@@ -98,7 +113,13 @@
         }
       }
       this._templates = templates.filter(u => typeof u === 'string');
-      console.debug(`[prefetch] templates resolved: ${this._templates.length}`);
+
+      // 以前と同じ数 & 同じ内容ならログを抑制してもよいが、
+      // とりあえず一行だけ残す（過剰ログ防止で conditions 追加）
+      if (!this._lastLog || this._lastLog !== this._templates.length) {
+        console.debug(`[prefetch] templates resolved: ${this._templates.length}`);
+        this._lastLog = this._templates.length;
+      }
     }
 
     async _fetchTileJSON(url) {
@@ -150,10 +171,10 @@
         }
       }
 
-      // デバッグ可視化
+      // デバッグ表示（※ここでは並べ替えしない）
       this._updateDebugOverlay(neighborSet, parentSet);
 
-      // Console も出す
+      // Console
       console.log("%cNeighbors (blue):", "color:blue;font-weight:bold", [...neighborSet]);
       console.log("%cParents (red):", "color:red;font-weight:bold", [...parentSet]);
 
@@ -234,9 +255,24 @@
       // 塗りの可視状態を反映
       this._applyFillVisibility();
 
-      // 最前面へ
-      const toTop = (id) => { const L=m.getStyle().layers||[]; const last=L[L.length-1]?.id; if (last && last!==id) m.moveLayer(id,last); };
-      ['prefetch-neighbors-fill','prefetch-neighbors-line','prefetch-parents-fill','prefetch-parents-line'].forEach(toTop);
+      // 必要なときだけ最前面化（既に最前面なら何もしない）
+      const toTopIfNeeded = (id) => {
+        const layers = m.getStyle().layers || [];
+        const idx = layers.findIndex(l => l.id === id);
+        if (idx === -1) return;
+        if (idx === layers.length - 1) return; // すでに最前面
+        this._styledataGuard = true;           // ループ防止
+        try {
+          // beforeId なしで本当の最前面へ
+          m.moveLayer(id);
+        } finally {
+          // 次フレームで解除
+          requestAnimationFrame(() => { this._styledataGuard = false; });
+        }
+      };
+
+      ['prefetch-neighbors-fill','prefetch-neighbors-line','prefetch-parents-fill','prefetch-parents-line']
+        .forEach(toTopIfNeeded);
     }
 
     _applyFillVisibility(){
@@ -252,13 +288,9 @@
       for (const k of parentSet){ const [z,x,y]=k.split('/').map(Number);  pf.push(this._tilePolygonFeature(z,x,y)); }
       this.map.getSource('prefetch-neighbors')?.setData({ type:'FeatureCollection', features:nf });
       this.map.getSource('prefetch-parents')?.setData({ type:'FeatureCollection', features:pf });
-
-      // 最前面維持
-      const toTop = (id) => { const L=this.map.getStyle().layers||[]; const last=L[L.length-1]?.id; if (last && last!==id) this.map.moveLayer(id,last); };
-      ['prefetch-neighbors-fill','prefetch-neighbors-line','prefetch-parents-fill','prefetch-parents-line'].forEach(toTop);
+      // ここでは moveLayer しない（無限 styledata 防止）
     }
   }
 
-  // export
   global.TilePrefetcher = TilePrefetcher;
 })(typeof window !== 'undefined' ? window : globalThis);
